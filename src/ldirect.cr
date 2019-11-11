@@ -30,7 +30,7 @@ class Hyperrectangle
     @size[dimension] /= 3
     right.size[dimension] /= 3
     left.center[dimension] -= 2 * left.size[dimension]
-    right.center[dimension] -= 2 * right.size[dimension]
+    right.center[dimension] += 2 * right.size[dimension]
     {left, right}
   end
 end
@@ -44,20 +44,24 @@ end
 def get_optimal_hyperrectangles(hyperrectangles : Array(Hyperrectangle),
                                 value : Proc(Array(Float64), Float64),
                                 h : Float64)
-  stack = [] of UInt32
+  stack = [] of Int32
   hyperrectangles.sort!
-  hyperrectangles.size.times do |index|
-    while stack.size > 1 && ccw(hyperrectangles[stack[-2, 1]],
-            hyperrectangles[stack[-1, 1]], hyperrectangle,
-            value)
+  index = 0
+  hyperrectangles.each do |hr|
+    while stack.size >= 1 && value.call(hyperrectangles[stack[-1]].center) >= value.call(hr.center)
       stack.pop
     end
     stack.push(index)
+    hr.center_value = value.call(hr.center)
+    index += 1
   end
-  stack.size.times do |index|
-    if index != 0 && value.call(hyperrectangles[stack[index - 1]].radius) >=
-         value.call(hyperrectangles[stack[index]].radius)
-      stack.delete_at(index - 1)
+  index = 0
+  stack.each do |optimal|
+    if index != stack.size - 1
+      hyperrectangles[optimal].k_tilde = (value.call(hyperrectangles[optimal].center) -
+                                          value.call(hyperrectangles[stack[index - 1]].center)) /
+                                         (hyperrectangles[optimal].radius -
+                                          hyperrectangles[stack[index - 1]].radius)
     end
   end
   stack
@@ -68,3 +72,13 @@ laryl, darryl = carol.subdivide(0)
 puts laryl.center
 puts carol.center
 puts darryl.center
+
+phil, chil = laryl.subdivide(1)
+
+def test(x : Array(Float64))
+  x[0]**2 * x[1]**2
+end
+
+darryl.size[0] = 0
+
+puts get_optimal_hyperrectangles([laryl, carol, darryl, phil, chil], ->test(Array(Float64)), 0)
