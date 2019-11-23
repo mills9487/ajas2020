@@ -48,11 +48,18 @@ def get_optimal_hyperrectangles(hyperrectangles : Array(Hyperrectangle),
   hyperrectangles.sort!
   index = 0
   hyperrectangles.each do |hr|
-    while stack.size >= 1 && value.call(hyperrectangles[stack[-1]].center) >= value.call(hr.center)
+    while stack.size >= 2 && ccw(hyperrectangles[stack[-1]], hyperrectangles[stack[-2]], hr, value) <= 0
       stack.pop
     end
     stack.push(index)
     hr.center_value = value.call(hr.center)
+    index += 1
+  end
+  index = 0
+  stack.each do |hr|
+    if index > 0 && hyperrectangles[stack[0]].center_value > hyperrectangles[hr].center_value
+      stack.delete_at(0)
+    end
     index += 1
   end
   index = 0
@@ -62,23 +69,39 @@ def get_optimal_hyperrectangles(hyperrectangles : Array(Hyperrectangle),
                                           value.call(hyperrectangles[stack[index - 1]].center)) /
                                          (hyperrectangles[optimal].radius -
                                           hyperrectangles[stack[index - 1]].radius)
+    else
+      hyperrectangles[optimal].k_tilde = h
     end
+    index += 1
   end
   stack
 end
 
-carol = Hyperrectangle.new([0.5, 0.5], [0.5, 0.5])
-laryl, darryl = carol.subdivide(0)
-puts laryl.center
-puts carol.center
-puts darryl.center
-
-phil, chil = laryl.subdivide(1)
-
 def test(x : Array(Float64))
-  x[0]**2 * x[1]**2
+  # Six-hump camel back function
+  (4 - 2.1*x[0]**2 + x[0]**4/3)*x[0]**2 + x[0]*x[1] + (-4 + 4*x[1]**2)*x[1]**2
 end
 
-darryl.size[0] = 0
+puts ("First vanilla DIRECT test results:")
 
-puts get_optimal_hyperrectangles([laryl, carol, darryl, phil, chil], ->test(Array(Float64)), 0)
+hr_list = [] of Hyperrectangle
+start = Hyperrectangle.new([1.0, 1.0], [0.0, 0.0])
+hr_list.push(start)
+
+cur = 0_u8
+
+50.times do
+  optimals = get_optimal_hyperrectangles(hr_list, ->test(Array(Float64)), 0)
+  optimals.each do |index|
+    left, right = hr_list[index].subdivide(cur)
+    hr_list.push(left)
+    hr_list.push(right)
+    if cur == 0_u8
+      cur = 1_u8
+    else
+      cur = 0_u8
+    end
+  end
+end
+
+puts hr_list[get_optimal_hyperrectangles(hr_list, ->test(Array(Float64)), 1)[0]].center_value
