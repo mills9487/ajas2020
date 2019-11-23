@@ -4,15 +4,15 @@ class Hyperrectangle
   property k_tilde
   property center_value
 
-  def initialize(size : Array(Float64), center : Array(Float64))
+  def initialize(size : Array(Float32), center : Array(Float32))
     @size = size
     @center = center
-    @k_tilde = Float64::NAN
-    @center_value = Float64::NAN
+    @k_tilde = Float32::NAN
+    @center_value = Float32::NAN
   end
 
   def radius
-    result = 0_f64
+    result = 0_f32
     size.each do |axis|
       result += axis**2
     end
@@ -36,14 +36,14 @@ class Hyperrectangle
 end
 
 def ccw(p : Hyperrectangle, q : Hyperrectangle, r : Hyperrectangle,
-        value : Proc(Array(Float64), Float64))
+        value : Proc(Array(Float32), Float32))
   (value.call(q.center) - value.call(p.center)) * (r.radius - q.radius) -
     (q.radius - p.radius) * (value.call(r.center) - value.call(q.center))
 end
 
 def get_optimal_hyperrectangles(hyperrectangles : Array(Hyperrectangle),
-                                value : Proc(Array(Float64), Float64),
-                                h : Float64)
+                                value : Proc(Array(Float32), Float32),
+                                h : Float32)
   stack = [] of Int32
   hyperrectangles.sort!
   index = 0
@@ -77,21 +77,22 @@ def get_optimal_hyperrectangles(hyperrectangles : Array(Hyperrectangle),
   stack
 end
 
-def test(x : Array(Float64))
+def test(x : Array(Float32)) : Float32
   # Six-hump camel back function
-  (4 - 2.1*x[0]**2 + x[0]**4/3)*x[0]**2 + x[0]*x[1] + (-4 + 4*x[1]**2)*x[1]**2
+  (4_f32 - 2.1_f32*x[0]**2_f32 + x[0]**4_f32/3_f32)*x[0]**2_f32 + x[0]*x[1] + (-4_f32 + 4_f32*x[1]**2_f32)*x[1]**2_f32
 end
 
 puts ("First vanilla DIRECT test results:")
 
 hr_list = [] of Hyperrectangle
-start = Hyperrectangle.new([1.0, 1.0], [0.0, 0.0])
+start = Hyperrectangle.new([1_f32, 1_f32], [0_f32, 0_f32])
 hr_list.push(start)
 
 cur = 0_u8
 
+optimals = get_optimal_hyperrectangles(hr_list, ->test(Array(Float32)), 0_f32)
+
 50.times do
-  optimals = get_optimal_hyperrectangles(hr_list, ->test(Array(Float64)), 0)
   optimals.each do |index|
     left, right = hr_list[index].subdivide(cur)
     hr_list.push(left)
@@ -102,6 +103,9 @@ cur = 0_u8
       cur = 0_u8
     end
   end
+  optimals = get_optimal_hyperrectangles(hr_list, ->test(Array(Float32)), 0_f32)
 end
 
-puts hr_list[get_optimal_hyperrectangles(hr_list, ->test(Array(Float64)), 1)[0]].center_value
+optimals.each do |index|
+  puts hr_list[index].k_tilde
+end
