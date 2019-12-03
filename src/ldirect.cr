@@ -1,139 +1,167 @@
-class Hyperrectangle
-  property size
-  property center
-  property k_tilde
-  property center_value
+require "./hyperrectangle.cr"
 
-  def initialize(size : Array(Float64), center : Array(Float64))
-    @size = size
-    @center = center
-    @k_tilde = Float64::NAN
-    @center_value = Float64::NAN
-  end
-
-  def radius
-    result = 0_f64
-    size.each do |axis|
-      result += axis**2
-    end
-    Math.sqrt(result)
-  end
-
-  def <=>(other : Hyperrectangle)
-    self.radius - other.radius
-  end
-
-  def subdivide(dimension : UInt8)
-    left = Hyperrectangle.new(@size.clone, @center.clone)
-    right = Hyperrectangle.new(@size.clone, @center.clone)
-    left.size[dimension] /= 3
-    @size[dimension] /= 3
-    right.size[dimension] /= 3
-    left.center[dimension] -= 2 * left.size[dimension]
-    right.center[dimension] += 2 * right.size[dimension]
-    {left, right}
+# Determines the 'direction' of three `Hyperrectangles`
+# If the three make a clockwise turn, returns `:clockwise`;
+# if they make a counterclockwise turn, returns `:counterclockwise`;
+# finally, if they are collinear, returns `:collinear`.
+# Fairly self-explanatory, just put here as a helper for the Graham scan.
+def turn(p : Hyperrectangle, q : Hyperrectangle, r : Hyperrectangle,
+         value : Proc(Array(Float64), Float64))
+  direction = (q.radius - p.radius) * (r.center_value - p.center_value) -
+              (r.radius - p.radius) * (q.center_value - p.center_value)
+  if direction < 0
+    return :clockwise
+  elsif direction > 0
+    return :counterclockwise
+  else
+    return :collinear
   end
 end
 
-def ccw(p : Hyperrectangle, q : Hyperrectangle, r : Hyperrectangle,
-        value : Proc(Array(Float64), Float64))
-  (value.call(q.center) - value.call(p.center)) * (r.radius - q.radius) -
-    (q.radius - p.radius) * (value.call(r.center) - value.call(q.center))
-end
-
-def get_optimal_hyperrectangles(hyperrectangles : Array(Hyperrectangle),
+# Finds and returns the optimal hyperrectangles from an array
+# Given an array of hyperrectangles, i.e. `hr_list`, uses the Graham scan
+# algorithm to determine which hyperrectangles are optimal.
+# **NOTE:**
+# This primarily works because Crystal is pass-by-reference for classes,
+# meaning that the hyperrectangles in the final array are directly connected
+# to the hyperrectangles in the initial array. If this behavior ever changes,
+# then this function will fail.
+def get_optimal_hyperrectangles(hr_list : Array(Hyperrectangle),
+                                epsilon : Float64, h : Float64,
                                 value : Proc(Array(Float64), Float64),
-                                h : Float64, current_best : Float64, epsilon : Float64)
-  stack = [] of Int32
-  hyperrectangles.sort!
-  index = 0
-  hyperrectangles.each do |hr|
-    while stack.size >= 2 && ccw(hyperrectangles[stack[-1]], hyperrectangles[stack[-2]], hr, value) <= 0
+                                current_best : Float64)
+  stack = [] of Hyperrectangle
+  hr_list.sort!
+
+  # Determines the center values of each hyperrectangle now, save time
+  hr_list.each do |hr|
+    if hr.center_value.nan?
+      # Reading this next bit feels like a tautology
+      hr.center_value = value.call(hr.center)
+    end
+  end
+
+  hr_list.uniq! { |s| s.radius * s.center_value }
+
+  # Gets rid of degenerates before the intensive stuff (would add an extra
+  # case for two hyperrectangles in here, but due to the way they're
+  # subdivided, that sort of thing can't really happen)
+  if hr_list.size == 1
+    stack.push(hr_list[0])
+    hr_list[0].k_tilde = h
+    return stack
+  end
+
+  # Graham scan; this version only finds the lower convex hull, since that's
+  # all that we will end up needing
+  hr_list.each do |hr|
+    hr.center_value = value.call(hr.center)
+    while stack.size >= 2 &&
+          turn(stack[-2], stack[-1], hr, value) != :counterclockwise
       stack.pop
     end
-    stack.push(index)
-    hr.center_value = value.call(hr.center)
-    index += 1
+    stack.push(hr)
   end
-  index = 0
-  stack.each do |hr|
-    if index > 0 && hyperrectangles[stack[0]].center_value >= hyperrectangles[hr].center_value
-      stack.delete_at(0)
-    end
-    index += 1
+
+  # Removes the downwards-sloping left lower convex hull, since we need
+  # specifically the right side
+  while stack.size >= 2 && stack[0].center_value >= stack[1].center_value
+    stack.delete_at(0)
   end
-  while stack.size >= 2 && hyperrectangles[stack[-1]].radius == hyperrectangles[stack[-2]].radius
+
+  # Fix the issue where the very last two points are often collinear in a
+  # vertical line, only preserve the lower one
+  if stack.size >= 2 && stack[-1].radius == stack[-2].radius
     stack.pop
   end
+
+  # Calculate and insert K-tilde values for each remaining optimal
+  # hyperrectangle in the stack
   index = 0
-  stack.each do |optimal|
-    if index != stack.size - 1
-      hyperrectangles[optimal].k_tilde = (value.call(hyperrectangles[optimal].center) -
-                                          value.call(hyperrectangles[stack[index + 1]].center)) /
-                                         (hyperrectangles[optimal].radius -
-                                          hyperrectangles[stack[index + 1]].radius)
+  stack.each do |op|
+    if op != stack[-1]
+      op.k_tilde = (stack[index + 1].center_value - op.center_value) /
+                   (stack[index + 1].radius - op.radius)
     else
-      hyperrectangles[optimal].k_tilde = h
+      op.k_tilde = h
     end
     index += 1
   end
+
+  # Implements the epsilon rule laid out in the original DIRECT paper
+  # If one of these turns out not to be able to improve much on the current
+  # best solution, delete it and recalculate K-tilde values accordingly
   index = 0
-  if epsilon != 0
-    stack.each do |optimal|
-      if hyperrectangles[optimal].center_value - (hyperrectangles[optimal].k_tilde * hyperrectangles[optimal].radius) >=
-           (1 + (current_best <= 0 ? 1 : -1) * epsilon) * current_best
-        stack.delete_at(index)
-      else
-        index += 1
-      end
+  stack.each do |op|
+    if op.min >= (current_best - epsilon * current_best.abs)
+      stack.delete_at(index)
     end
+    index += 1
   end
+
   stack
 end
 
-def test(x : Array(Float64)) : Float64
-  # Six-hump camel back function
-  (4_f64 - 2.1_f64*x[0]**2_f64 + x[0]**4_f64/3_f64)*x[0]**2_f64 + x[0]*x[1] + (-4_f64 + 4_f64*x[1]**2_f64)*x[1]**2_f64
+# CDF of the normal distribution
+# Used for the non-deterministic portion of the stopping conditions checker,
+# and *technically* not the actual CDF because it's been adapted so that
+# when x = 0, the output is 1.
+def normal_cdf(x : Float64, y : Float64, sigma : Float64)
+  1 + Math.erf((x - y) / (-sigma * Math.sqrt(2)))
 end
 
-def shubert(x : Array(Float64)) : Float64
-  # Shubert function
-  temp_1 = 0
-  5.times do |i|
-    temp_1 += (i + 1) * Math.cos((i + 2) * x[0] + i + 1)
-  end
-  temp_2 = 0
-  5.times do |i|
-    temp_2 += (i + 1) * Math.cos((i + 2) * x[1] + i + 1)
-  end
-  (temp_1 * temp_2).as(Float64)
+def hyperbolic_tangent(x : Float64, y : Float64, sigma : Float64)
+  1 - Math.tanh((x - y) / sigma)
 end
 
-puts ("First vanilla DIRECT test results:")
+def error_function(x : Float64, y : Float64, sigma : Float64)
+  1 - Math.erf((x - y) / sigma)
+end
 
-hr_list = [] of Hyperrectangle
-start = Hyperrectangle.new([5.12, 5.12], [0_f64, 0_f64])
-hr_list.push(start)
+def logistic_function(x : Float64, y : Float64, sigma : Float64)
+  2 / (1 + Math.exp((x - y) / sigma))
+end
 
-cur = 0_u8
+def inverse_tangent(x : Float64, y : Float64, sigma : Float64)
+  1 - (Math.atan((x - y) / sigma) * (2.0 / Math::PI))
+end
 
-optimals = get_optimal_hyperrectangles(hr_list, ->shubert(Array(Float64)), 1_f64, -1.0 / 0.0, 0)
+# Implements the lDIRECT algorithm
+# Uses a quality-based stopping criterion with the DIRECT algorithm.
+def ldirect(size : Array(Float64), center : Array(Float64), epsilon : Float64,
+            test_function : Proc(Array(Float64), Float64), sigma : Float64,
+            h : Float64, qd : Proc(Float64, Float64, Float64, Float64))
+  start = Hyperrectangle.new(size, center)
+  hr_list = [start]
+  current_best = test_function.call(center)
+  optimals = [] of Hyperrectangle
+  begin_time = Time.utc
 
-current_best = hr_list[optimals[0]].center_value
+  while true
+    optimals = get_optimal_hyperrectangles(hr_list, epsilon, h, test_function,
+      current_best)
 
-1000.times do |iteration|
-  optimals.each do |index|
-    left, right = hr_list[index].subdivide((hr_list[index].size.index(hr_list[index].size.max)).as(Int32).to_u8)
-    hr_list.push(left)
-    hr_list.push(right)
-    if cur == 0_u8
-      cur = 1_u8
-    else
-      cur = 0_u8
+    if optimals[0].center_value < current_best
+      current_best = optimals[0].center_value
+    end
+
+    minima = Array.new(optimals.size) { |i| optimals[i].min }
+
+    # King of kings, Lord of lords
+    # Minimum of minima
+    absolute_minimum = minima.min
+    will_accept = qd.call(current_best, absolute_minimum, sigma)
+    the_arbitrator = Random::Secure.rand
+    if the_arbitrator <= will_accept || (Time.utc - begin_time) >= 10.seconds
+      break
+    end
+
+    optimals.each do |op|
+      left, right = op.subdivide
+      hr_list.push(left)
+      hr_list.push(right)
     end
   end
-  optimals = get_optimal_hyperrectangles(hr_list, ->shubert(Array(Float64)), 1_f64, current_best, 0.00001)
-  current_best = hr_list[optimals[0]].center_value
-end
 
-puts current_best
+  current_best
+end
